@@ -18,13 +18,13 @@ export function useAuth() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signIn = (email) =>
-    supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
-
-  const signInWithPassword = (email, password) =>
+  const signIn = (email, password) =>
     supabase.auth.signInWithPassword({ email, password });
+
+  const signUp = (email, password) =>
+    supabase.auth.signUp({ email, password });
 
   const signOut = () => supabase.auth.signOut();
 
-  return { session, loading, signIn, signInWithPassword, signOut };
+  return { session, loading, signIn, signUp, signOut };
 }

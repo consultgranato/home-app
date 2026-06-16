@@ -88,24 +88,26 @@ function nextKeyDate(md){
 function keyDateLabel(days){ return days===0?"Today":days===1?"Tomorrow":`In ${days} days`; }
 
 // ========== AUTH SCREEN ==========
-function AuthScreen({ signIn, signInWithPassword }) {
+function AuthScreen({ signIn, signUp }) {
+  const [mode, setMode] = useState("signin"); // "signin" | "signup"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const isDev = import.meta.env.DEV;
+  const [ok, setOk] = useState("");
+
+  const switchMode = (m) => { setMode(m); setErr(""); setOk(""); };
 
   const submit = async () => {
-    if (!email.trim()) return;
-    setBusy(true); setErr("");
-    if (isDev && password) {
-      const { error } = await signInWithPassword(email.trim(), password);
-      if (error) { setErr(error.message); setBusy(false); return; }
+    if (!email.trim() || !password) return;
+    setBusy(true); setErr(""); setOk("");
+    if (mode === "signup") {
+      const { data, error } = await signUp(email.trim(), password);
+      if (error) { setErr(error.message); }
+      else if (!data.session) { setOk("Account created — check your email to confirm, then sign in."); }
     } else {
-      const { error } = await signIn(email.trim());
-      if (error) { setErr(error.message); setBusy(false); return; }
-      setSent(true);
+      const { error } = await signIn(email.trim(), password);
+      if (error) { setErr(error.message); }
     }
     setBusy(false);
   };
@@ -124,54 +126,42 @@ function AuthScreen({ signIn, signInWithPassword }) {
           </div>
         </div>
 
-        {sent ? (
-          <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 text-center space-y-3">
-            <div className="text-3xl">✉️</div>
-            <p className="text-zinc-100 font-medium">Check your email</p>
-            <p className="text-sm text-zinc-400">We sent a magic link to <span className="text-zinc-200">{email}</span>. Click it to sign in — no password needed.</p>
-            <button onClick={()=>setSent(false)} className="text-xs text-zinc-500 hover:text-zinc-300">Use a different email</button>
-          </div>
-        ) : (
-          <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-4">
-            <div>
-              <p className="text-sm text-zinc-300 font-medium mb-1">Sign in with magic link</p>
-              <p className="text-xs text-zinc-500">No password. We'll email you a one-click sign-in link.</p>
-            </div>
-            <input
-              type="email"
-              value={email}
-              onChange={e=>setEmail(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&submit()}
-              placeholder="your@email.com"
-              className="input"
-              autoFocus
-            />
-            {isDev && (
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">DEV</span>
-                  <span className="text-xs text-zinc-500">Enter password to skip magic link</span>
-                </div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e=>setPassword(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&submit()}
-                  placeholder="password (dev only)"
-                  className="input"
-                />
-              </div>
-            )}
-            {err && <p className="text-xs text-rose-400">{err}</p>}
-            <button
-              onClick={submit}
-              disabled={busy}
-              className="w-full bg-amber-400 text-zinc-900 rounded-xl py-2.5 font-medium hover:bg-amber-300 disabled:opacity-50"
-            >
-              {busy ? "Signing in…" : (isDev && password ? "Sign in" : "Send magic link")}
-            </button>
-          </div>
-        )}
+        <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 space-y-4">
+          <p className="text-sm text-zinc-300 font-medium">
+            {mode === "signin" ? "Sign in" : "Create account"}
+          </p>
+          <input
+            type="email"
+            value={email}
+            onChange={e=>setEmail(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&submit()}
+            placeholder="your@email.com"
+            className="input"
+            autoFocus
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={e=>setPassword(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&submit()}
+            placeholder="Password"
+            className="input"
+          />
+          {err && <p className="text-xs text-rose-400">{err}</p>}
+          {ok  && <p className="text-xs text-emerald-400">{ok}</p>}
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="w-full bg-amber-400 text-zinc-900 rounded-xl py-2.5 font-medium hover:bg-amber-300 disabled:opacity-50"
+          >
+            {busy ? "…" : mode === "signin" ? "Sign in" : "Create account"}
+          </button>
+          <p className="text-xs text-center text-zinc-500">
+            {mode === "signin"
+              ? <>No account? <button onClick={()=>switchMode("signup")} className="text-zinc-300 hover:text-white">Create one</button></>
+              : <>Already have one? <button onClick={()=>switchMode("signin")} className="text-zinc-300 hover:text-white">Sign in</button></>}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -258,7 +248,7 @@ function HouseholdSetup({ createHousehold, joinHousehold, error }) {
 
 // ========== MAIN APP ==========
 export default function App() {
-  const { session, loading: authLoading, signIn, signInWithPassword, signOut } = useAuth();
+  const { session, loading: authLoading, signIn, signUp, signOut } = useAuth();
   const { householdId, slot, loading: hhLoading, error: hhError, createHousehold, joinHousehold } = useHousehold(session?.user?.id);
   const data = useAppData(householdId);
 
@@ -279,7 +269,7 @@ export default function App() {
     );
   }
 
-  if (!session) return <AuthScreen signIn={signIn} signInWithPassword={signInWithPassword}/>;
+  if (!session) return <AuthScreen signIn={signIn} signUp={signUp}/>;
   if (!householdId) return <HouseholdSetup createHousehold={createHousehold} joinHousehold={joinHousehold} error={hhError}/>;
 
   if (data.dataLoading) {
