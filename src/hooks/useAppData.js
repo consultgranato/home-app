@@ -22,8 +22,8 @@ const toDbChore = (c, hid) => ({ household_id: hid, name: c.name, frequency: c.f
 const fromDbTrip = (r) => ({ id: r.id, name: r.name || "", destination: r.destination || "", start: r.start_date || "", end: r.end_date || "", checklist: [] });
 const toDbTrip = (t, hid) => ({ household_id: hid, name: t.name, destination: t.destination, start_date: t.start || null, end_date: t.end || null });
 
-const fromDbTripItem = (r) => ({ id: r.id, text: r.text, done: r.done });
-const toDbTripItem = (i, tripId, hid) => ({ trip_id: tripId, household_id: hid, text: i.text, done: i.done });
+const fromDbTripItem = (r) => ({ id: r.id, text: r.text, done: r.done, owner: r.owner || "p1", kind: r.kind || "todo" });
+const toDbTripItem = (i, tripId, hid) => ({ trip_id: tripId, household_id: hid, text: i.text, done: i.done, owner: i.owner || "p1", kind: i.kind || "todo" });
 
 const fromDbIdea = (r) => ({ id: r.id, text: r.text });
 const toDbIdea = (i, hid) => ({ household_id: hid, text: i.text });
