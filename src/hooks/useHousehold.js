@@ -10,11 +10,13 @@ export function useHousehold(userId) {
   const resolve = useCallback(async () => {
     if (!userId) { setLoading(false); return; }
     setLoading(true);
-    const { data } = await supabase
+    const { data, error: resolveErr } = await supabase
       .from("household_members")
       .select("household_id, slot")
       .eq("user_id", userId)
       .maybeSingle();
+
+    if (resolveErr) console.error("useHousehold resolve error:", resolveErr);
 
     if (data) {
       setHouseholdId(data.household_id);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../supabaseClient";
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -6,47 +6,49 @@ const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 // ---- DB <-> App transforms ----
 
 const fromDbEvent = (r) => ({ id: r.id, date: r.event_date, title: r.title, time: r.time || "", person: r.person });
-const toDbEvent = (e, hid) => ({ id: e.id, household_id: hid, event_date: e.date, title: e.title, time: e.time || null, person: e.person });
+const toDbEvent = (e, hid) => ({ household_id: hid, event_date: e.date, title: e.title, time: e.time || null, person: e.person });
 
 const fromDbDinner = (r) => ({ name: r.name || "", ingredients: r.notes || "" });
 
 const fromDbGrocery = (r) => ({ id: r.id, name: r.name, cat: r.category, checked: r.checked });
-const toDbGrocery = (g, hid) => ({ id: g.id, household_id: hid, name: g.name, category: g.cat, checked: g.checked });
+const toDbGrocery = (g, hid) => ({ household_id: hid, name: g.name, category: g.cat, checked: g.checked });
 
 const fromDbTodo = (r) => ({ id: r.id, text: r.text, done: r.done });
-const toDbTodo = (t, list, hid) => ({ id: t.id, household_id: hid, list, text: t.text, done: t.done });
+const toDbTodo = (t, list, hid) => ({ household_id: hid, list, text: t.text, done: t.done });
 
 const fromDbChore = (r) => ({ id: r.id, name: r.name, frequency: r.frequency, assignedTo: r.assigned_to, lastDone: r.last_done });
-const toDbChore = (c, hid) => ({ id: c.id, household_id: hid, name: c.name, frequency: c.frequency, assigned_to: c.assignedTo, last_done: c.lastDone || null });
+const toDbChore = (c, hid) => ({ household_id: hid, name: c.name, frequency: c.frequency, assigned_to: c.assignedTo, last_done: c.lastDone || null });
 
 const fromDbTrip = (r) => ({ id: r.id, name: r.name || "", destination: r.destination || "", start: r.start_date || "", end: r.end_date || "", checklist: [] });
-const toDbTrip = (t, hid) => ({ id: t.id, household_id: hid, name: t.name, destination: t.destination, start_date: t.start || null, end_date: t.end || null });
+const toDbTrip = (t, hid) => ({ household_id: hid, name: t.name, destination: t.destination, start_date: t.start || null, end_date: t.end || null });
 
 const fromDbTripItem = (r) => ({ id: r.id, text: r.text, done: r.done });
-const toDbTripItem = (i, tripId, hid) => ({ id: i.id, trip_id: tripId, household_id: hid, text: i.text, done: i.done });
+const toDbTripItem = (i, tripId, hid) => ({ trip_id: tripId, household_id: hid, text: i.text, done: i.done });
 
 const fromDbIdea = (r) => ({ id: r.id, text: r.text });
-const toDbIdea = (i, hid) => ({ id: i.id, household_id: hid, text: i.text });
+const toDbIdea = (i, hid) => ({ household_id: hid, text: i.text });
 
 const fromDbPlace = (r) => ({ id: r.id, name: r.name, kind: r.kind });
-const toDbPlace = (p, hid) => ({ id: p.id, household_id: hid, kind: p.kind, name: p.name });
+const toDbPlace = (p, hid) => ({ household_id: hid, kind: p.kind, name: p.name });
 
 const fromDbMeal = (r) => ({ id: r.id, name: r.name });
-const toDbMeal = (m, hid) => ({ id: m.id, household_id: hid, name: m.name });
+const toDbMeal = (m, hid) => ({ household_id: hid, name: m.name });
 
 const fromDbNote = (r) => ({ id: r.id, text: r.body || "", at: new Date(r.created_at).getTime(), att: [] });
 
 const fromDbKeyDate = (r) => ({ id: r.id, label: r.label, md: `${String(r.month).padStart(2, "0")}-${String(r.day).padStart(2, "0")}` });
 const toDbKeyDate = (d, hid) => {
   const [m, day] = d.md.split("-").map(Number);
-  return { id: d.id, household_id: hid, label: d.label, month: m, day };
+  return { household_id: hid, label: d.label, month: m, day };
 };
 
 const fromDbSettings = (r) => ({ name1: r.name1 || "Tony", name2: r.name2 || "Alex", home: r.home_name || "Our Home", color1: r.color1 || "indigo", color2: r.color2 || "rose", colorBoth: r.color_both || "emerald" });
 
 // ---- Generic row-level sync ----
+// onNewId(localId, dbId) — called after each insert so callers can swap the
+// temp client id for the real Postgres UUID in local state.
 
-async function syncRows(table, oldRows, newRows, toDb) {
+async function syncRows(table, oldRows, newRows, toDb, onNewId) {
   const oldMap = new Map(oldRows.map((r) => [r.id, r]));
   const newMap = new Map(newRows.map((r) => [r.id, r]));
 
@@ -57,7 +59,8 @@ async function syncRows(table, oldRows, newRows, toDb) {
 
   for (const [id, row] of newMap) {
     if (!oldMap.has(id)) {
-      await supabase.from(table).insert(toDb(row));
+      const { data } = await supabase.from(table).insert(toDb(row)).select("id").single();
+      if (data?.id && onNewId) onNewId(id, data.id);
     } else if (JSON.stringify(oldMap.get(id)) !== JSON.stringify(row)) {
       await supabase.from(table).update(toDb(row)).eq("id", id);
     }
@@ -65,8 +68,11 @@ async function syncRows(table, oldRows, newRows, toDb) {
 }
 
 // ---- Attachment helpers ----
+// Storage path needs a known id before upload, so we generate a real UUID
+// here rather than receiving a client-generated short id from the caller.
 
-async function uploadAttachment(file, compressedBlob, householdId, attId, parentType, parentId) {
+async function uploadAttachment(file, compressedBlob, householdId, parentType, parentId) {
+  const attId = crypto.randomUUID();
   const path = `${householdId}/${attId}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
   const { error: upErr } = await supabase.storage.from("attachments").upload(path, compressedBlob, { contentType: file.type });
   if (upErr) throw new Error(upErr.message);
@@ -117,9 +123,6 @@ export function useAppData(householdId) {
   const [dates, setDates] = useState([]);
   const [settings, setSettings] = useState({ name1: "Tony", name2: "Alex", home: "Our Home", color1: "indigo", color2: "rose", colorBoth: "emerald" });
   const [dataLoading, setDataLoading] = useState(true);
-
-  // Track locally-applied inserts to avoid double-applying the realtime echo
-  const pendingIds = useRef(new Set());
 
   // ---- Load all data ----
   useEffect(() => {
@@ -226,7 +229,7 @@ export function useAppData(householdId) {
     sub(`rt-events-${householdId}`, "events", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setEvents((cur) => {
         if (eventType === "INSERT") {
-          if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; }
+          if (cur.some((r) => r.id === n.id)) return cur;
           return [...cur, fromDbEvent(n)];
         }
         if (eventType === "UPDATE") return cur.map((r) => r.id === n.id ? fromDbEvent(n) : r);
@@ -246,7 +249,7 @@ export function useAppData(householdId) {
 
     sub(`rt-grocery-${householdId}`, "grocery_items", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setGrocery((cur) => {
-        if (eventType === "INSERT") { if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; } return [...cur, fromDbGrocery(n)]; }
+        if (eventType === "INSERT") { if (cur.some((r) => r.id === n.id)) return cur; return [...cur, fromDbGrocery(n)]; }
         if (eventType === "UPDATE") return cur.map((r) => r.id === n.id ? fromDbGrocery(n) : r);
         if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
         return cur;
@@ -258,7 +261,7 @@ export function useAppData(householdId) {
         const list = eventType === "DELETE" ? o.list : n.list;
         if (!list) return cur;
         if (eventType === "INSERT") {
-          if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; }
+          if ((cur[list] || []).some((r) => r.id === n.id)) return cur;
           return { ...cur, [list]: [...(cur[list] || []), fromDbTodo(n)] };
         }
         if (eventType === "UPDATE") return { ...cur, [list]: (cur[list] || []).map((r) => r.id === n.id ? fromDbTodo(n) : r) };
@@ -270,7 +273,7 @@ export function useAppData(householdId) {
     sub(`rt-notes-${householdId}`, "notes", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setNotes((cur) => {
         if (eventType === "INSERT") {
-          if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; }
+          if (cur.some((r) => r.id === n.id)) return cur;
           return [fromDbNote(n), ...cur];
         }
         if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
@@ -280,7 +283,7 @@ export function useAppData(householdId) {
 
     sub(`rt-chores-${householdId}`, "chores", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setChores((cur) => {
-        if (eventType === "INSERT") { if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; } return [...cur, fromDbChore(n)]; }
+        if (eventType === "INSERT") { if (cur.some((r) => r.id === n.id)) return cur; return [...cur, fromDbChore(n)]; }
         if (eventType === "UPDATE") return cur.map((r) => r.id === n.id ? fromDbChore(n) : r);
         if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
         return cur;
@@ -289,7 +292,7 @@ export function useAppData(householdId) {
 
     sub(`rt-trips-${householdId}`, "trips", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setTrips((cur) => {
-        if (eventType === "INSERT") { if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; } return [...cur, fromDbTrip(n)]; }
+        if (eventType === "INSERT") { if (cur.some((r) => r.id === n.id)) return cur; return [...cur, fromDbTrip(n)]; }
         if (eventType === "UPDATE") return cur.map((r) => r.id === n.id ? { ...r, ...fromDbTrip(n), checklist: r.checklist } : r);
         if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
         return cur;
@@ -299,7 +302,7 @@ export function useAppData(householdId) {
     sub(`rt-trip-items-${householdId}`, "trip_items", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setTrips((cur) => cur.map((t) => {
         if (eventType === "INSERT" && t.id === n.trip_id) {
-          if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return t; }
+          if ((t.checklist || []).some((i) => i.id === n.id)) return t;
           return { ...t, checklist: [...(t.checklist || []), fromDbTripItem(n)] };
         }
         if (eventType === "UPDATE" && t.id === n.trip_id) {
@@ -314,7 +317,7 @@ export function useAppData(householdId) {
 
     sub(`rt-ideas-${householdId}`, "trip_ideas", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setIdeas((cur) => {
-        if (eventType === "INSERT") { if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; } return [fromDbIdea(n), ...cur]; }
+        if (eventType === "INSERT") { if (cur.some((r) => r.id === n.id)) return cur; return [fromDbIdea(n), ...cur]; }
         if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
         return cur;
       });
@@ -324,7 +327,7 @@ export function useAppData(householdId) {
       setVisited((cur) => {
         const kind = eventType === "DELETE" ? o.kind : n.kind;
         const key = kind === "country" ? "countries" : "states";
-        if (eventType === "INSERT") { if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; } return { ...cur, [key]: [...(cur[key] || []), fromDbPlace(n)] }; }
+        if (eventType === "INSERT") { if ((cur[key] || []).some((r) => r.id === n.id)) return cur; return { ...cur, [key]: [...(cur[key] || []), fromDbPlace(n)] }; }
         if (eventType === "DELETE") return { ...cur, [key]: (cur[key] || []).filter((r) => r.id !== o.id) };
         return cur;
       });
@@ -332,7 +335,7 @@ export function useAppData(householdId) {
 
     sub(`rt-meals-${householdId}`, "favorite_meals", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setMeals((cur) => {
-        if (eventType === "INSERT") { if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; } return [...cur, fromDbMeal(n)]; }
+        if (eventType === "INSERT") { if (cur.some((r) => r.id === n.id)) return cur; return [...cur, fromDbMeal(n)]; }
         if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
         return cur;
       });
@@ -340,7 +343,7 @@ export function useAppData(householdId) {
 
     sub(`rt-keydates-${householdId}`, "key_dates", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
       setDates((cur) => {
-        if (eventType === "INSERT") { if (pendingIds.current.has(n.id)) { pendingIds.current.delete(n.id); return cur; } return [...cur, fromDbKeyDate(n)]; }
+        if (eventType === "INSERT") { if (cur.some((r) => r.id === n.id)) return cur; return [...cur, fromDbKeyDate(n)]; }
         if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
         return cur;
       });
@@ -361,7 +364,9 @@ export function useAppData(householdId) {
   const upEvents = useCallback(async (newEvents) => {
     const cur = events;
     setEvents(newEvents);
-    await syncRows("events", cur, newEvents, (e) => toDbEvent(e, householdId));
+    await syncRows("events", cur, newEvents, (e) => toDbEvent(e, householdId), (localId, dbId) => {
+      setEvents((prev) => prev.map((e) => e.id === localId ? { ...e, id: dbId } : e));
+    });
   }, [events, householdId]);
 
   const upDinners = useCallback(async (newDinners) => {
@@ -387,7 +392,9 @@ export function useAppData(householdId) {
   const upGrocery = useCallback(async (newGrocery) => {
     const cur = grocery;
     setGrocery(newGrocery);
-    await syncRows("grocery_items", cur, newGrocery, (g) => toDbGrocery(g, householdId));
+    await syncRows("grocery_items", cur, newGrocery, (g) => toDbGrocery(g, householdId), (localId, dbId) => {
+      setGrocery((prev) => prev.map((g) => g.id === localId ? { ...g, id: dbId } : g));
+    });
   }, [grocery, householdId]);
 
   const upTodos = useCallback(async (newTodos) => {
@@ -403,7 +410,12 @@ export function useAppData(householdId) {
       ...(newTodos.p1 || []).map((t) => ({ ...t, list: "p1" })),
       ...(newTodos.p2 || []).map((t) => ({ ...t, list: "p2" })),
     ];
-    await syncRows("todos", flatOld, flatNew, (t) => toDbTodo(t, t.list, householdId));
+    await syncRows("todos", flatOld, flatNew, (t) => toDbTodo(t, t.list, householdId), (localId, dbId) => {
+      setTodos((prev) => {
+        const remap = (arr) => arr.map((t) => t.id === localId ? { ...t, id: dbId } : t);
+        return { shared: remap(prev.shared), p1: remap(prev.p1), p2: remap(prev.p2) };
+      });
+    });
   }, [todos, householdId]);
 
   const upNotes = useCallback(async (newNotes) => {
@@ -416,8 +428,10 @@ export function useAppData(householdId) {
     }
     for (const n of newNotes) {
       if (!oldIds.has(n.id)) {
-        pendingIds.current.add(n.id);
-        await supabase.from("notes").insert({ id: n.id, household_id: householdId, body: n.text });
+        const { data } = await supabase.from("notes").insert({ household_id: householdId, body: n.text }).select("id").single();
+        if (data?.id) {
+          setNotes((prev) => prev.map((note) => note.id === n.id ? { ...note, id: data.id } : note));
+        }
       }
     }
   }, [notes, householdId]);
@@ -425,7 +439,9 @@ export function useAppData(householdId) {
   const upChores = useCallback(async (newChores) => {
     const cur = chores;
     setChores(newChores);
-    await syncRows("chores", cur, newChores, (c) => toDbChore(c, householdId));
+    await syncRows("chores", cur, newChores, (c) => toDbChore(c, householdId), (localId, dbId) => {
+      setChores((prev) => prev.map((c) => c.id === localId ? { ...c, id: dbId } : c));
+    });
   }, [chores, householdId]);
 
   const upTrips = useCallback(async (newTrips) => {
@@ -435,19 +451,25 @@ export function useAppData(householdId) {
     const oldMap = new Map(cur.map((t) => [t.id, t]));
     const newMap = new Map(newTrips.map((t) => [t.id, t]));
 
-    // Deletions
     for (const [id] of oldMap) {
       if (!newMap.has(id)) await supabase.from("trips").delete().eq("id", id);
     }
 
     for (const [id, trip] of newMap) {
       if (!oldMap.has(id)) {
-        pendingIds.current.add(id);
-        await supabase.from("trips").insert(toDbTrip(trip, householdId));
-        if (trip.checklist?.length) {
-          for (const item of trip.checklist) {
-            pendingIds.current.add(item.id);
-            await supabase.from("trip_items").insert(toDbTripItem(item, id, householdId));
+        const { data: tripData } = await supabase.from("trips").insert(toDbTrip(trip, householdId)).select("id").single();
+        if (tripData?.id) {
+          const dbTripId = tripData.id;
+          setTrips((prev) => prev.map((t) => t.id === id ? { ...t, id: dbTripId } : t));
+          if (trip.checklist?.length) {
+            for (const item of trip.checklist) {
+              const { data: itemData } = await supabase.from("trip_items").insert(toDbTripItem(item, dbTripId, householdId)).select("id").single();
+              if (itemData?.id) {
+                setTrips((prev) => prev.map((t) => t.id === dbTripId
+                  ? { ...t, checklist: (t.checklist || []).map((ci) => ci.id === item.id ? { ...ci, id: itemData.id } : ci) }
+                  : t));
+              }
+            }
           }
         }
       } else {
@@ -456,7 +478,11 @@ export function useAppData(householdId) {
         if (JSON.stringify(tripMeta(old)) !== JSON.stringify(tripMeta(trip))) {
           await supabase.from("trips").update(toDbTrip(trip, householdId)).eq("id", id);
         }
-        await syncRows("trip_items", old.checklist || [], trip.checklist || [], (i) => toDbTripItem(i, id, householdId));
+        await syncRows("trip_items", old.checklist || [], trip.checklist || [], (i) => toDbTripItem(i, id, householdId), (localId, dbId) => {
+          setTrips((prev) => prev.map((t) => t.id === id
+            ? { ...t, checklist: (t.checklist || []).map((ci) => ci.id === localId ? { ...ci, id: dbId } : ci) }
+            : t));
+        });
       }
     }
   }, [trips, householdId]);
@@ -464,7 +490,9 @@ export function useAppData(householdId) {
   const upIdeas = useCallback(async (newIdeas) => {
     const cur = ideas;
     setIdeas(newIdeas);
-    await syncRows("trip_ideas", cur, newIdeas, (i) => toDbIdea(i, householdId));
+    await syncRows("trip_ideas", cur, newIdeas, (i) => toDbIdea(i, householdId), (localId, dbId) => {
+      setIdeas((prev) => prev.map((i) => i.id === localId ? { ...i, id: dbId } : i));
+    });
   }, [ideas, householdId]);
 
   const upVisited = useCallback(async (newVisited) => {
@@ -478,13 +506,20 @@ export function useAppData(householdId) {
       ...(newVisited.countries || []).map((p) => ({ ...p, kind: "country" })),
       ...(newVisited.states || []).map((p) => ({ ...p, kind: "state" })),
     ];
-    await syncRows("visited_places", flatOld, flatNew, (p) => toDbPlace(p, householdId));
+    await syncRows("visited_places", flatOld, flatNew, (p) => toDbPlace(p, householdId), (localId, dbId) => {
+      setVisited((prev) => ({
+        countries: prev.countries.map((p) => p.id === localId ? { ...p, id: dbId } : p),
+        states: prev.states.map((p) => p.id === localId ? { ...p, id: dbId } : p),
+      }));
+    });
   }, [visited, householdId]);
 
   const upMeals = useCallback(async (newMeals) => {
     const cur = meals;
     setMeals(newMeals);
-    await syncRows("favorite_meals", cur, newMeals, (m) => toDbMeal(m, householdId));
+    await syncRows("favorite_meals", cur, newMeals, (m) => toDbMeal(m, householdId), (localId, dbId) => {
+      setMeals((prev) => prev.map((m) => m.id === localId ? { ...m, id: dbId } : m));
+    });
   }, [meals, householdId]);
 
   const upImportant = useCallback(async (text) => {
@@ -507,7 +542,9 @@ export function useAppData(householdId) {
   const upDates = useCallback(async (newDates) => {
     const cur = dates;
     setDates(newDates);
-    await syncRows("key_dates", cur, newDates, (d) => toDbKeyDate(d, householdId));
+    await syncRows("key_dates", cur, newDates, (d) => toDbKeyDate(d, householdId), (localId, dbId) => {
+      setDates((prev) => prev.map((d) => d.id === localId ? { ...d, id: dbId } : d));
+    });
   }, [dates, householdId]);
 
   const upSettings = useCallback(async (newSettings) => {
@@ -522,9 +559,8 @@ export function useAppData(householdId) {
     }).eq("id", householdId);
   }, [householdId]);
 
-  // Called when user uploads a new attachment (Storage-backed)
-  const addAttachment = useCallback(async (file, compressedBlob, attId, parentType, parentId) => {
-    const att = await uploadAttachment(file, compressedBlob, householdId, attId, parentType, parentId);
+  const addAttachment = useCallback(async (file, compressedBlob, _attId, parentType, parentId) => {
+    const att = await uploadAttachment(file, compressedBlob, householdId, parentType, parentId);
     if (parentType === "important") {
       setImportantFiles((cur) => [...cur, att]);
     } else if (parentType === "note") {

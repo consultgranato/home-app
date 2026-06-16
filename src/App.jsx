@@ -88,18 +88,26 @@ function nextKeyDate(md){
 function keyDateLabel(days){ return days===0?"Today":days===1?"Tomorrow":`In ${days} days`; }
 
 // ========== AUTH SCREEN ==========
-function AuthScreen({ signIn }) {
+function AuthScreen({ signIn, signInWithPassword }) {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const isDev = import.meta.env.DEV;
 
   const submit = async () => {
     if (!email.trim()) return;
     setBusy(true); setErr("");
-    const { error } = await signIn(email.trim());
-    if (error) { setErr(error.message); setBusy(false); return; }
-    setSent(true); setBusy(false);
+    if (isDev && password) {
+      const { error } = await signInWithPassword(email.trim(), password);
+      if (error) { setErr(error.message); setBusy(false); return; }
+    } else {
+      const { error } = await signIn(email.trim());
+      if (error) { setErr(error.message); setBusy(false); return; }
+      setSent(true);
+    }
+    setBusy(false);
   };
 
   return (
@@ -138,13 +146,29 @@ function AuthScreen({ signIn }) {
               className="input"
               autoFocus
             />
+            {isDev && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">DEV</span>
+                  <span className="text-xs text-zinc-500">Enter password to skip magic link</span>
+                </div>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e=>setPassword(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&submit()}
+                  placeholder="password (dev only)"
+                  className="input"
+                />
+              </div>
+            )}
             {err && <p className="text-xs text-rose-400">{err}</p>}
             <button
               onClick={submit}
               disabled={busy}
               className="w-full bg-amber-400 text-zinc-900 rounded-xl py-2.5 font-medium hover:bg-amber-300 disabled:opacity-50"
             >
-              {busy ? "Sending…" : "Send magic link"}
+              {busy ? "Signing in…" : (isDev && password ? "Sign in" : "Send magic link")}
             </button>
           </div>
         )}
@@ -234,7 +258,7 @@ function HouseholdSetup({ createHousehold, joinHousehold, error }) {
 
 // ========== MAIN APP ==========
 export default function App() {
-  const { session, loading: authLoading, signIn, signOut } = useAuth();
+  const { session, loading: authLoading, signIn, signInWithPassword, signOut } = useAuth();
   const { householdId, slot, loading: hhLoading, error: hhError, createHousehold, joinHousehold } = useHousehold(session?.user?.id);
   const data = useAppData(householdId);
 
@@ -255,7 +279,7 @@ export default function App() {
     );
   }
 
-  if (!session) return <AuthScreen signIn={signIn}/>;
+  if (!session) return <AuthScreen signIn={signIn} signInWithPassword={signInWithPassword}/>;
   if (!householdId) return <HouseholdSetup createHousehold={createHousehold} joinHousehold={joinHousehold} error={hhError}/>;
 
   if (data.dataLoading) {

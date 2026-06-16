@@ -21,7 +21,10 @@ export function useAuth() {
   const signIn = (email) =>
     supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
 
+  const signInWithPassword = (email, password) =>
+    supabase.auth.signInWithPassword({ email, password });
+
   const signOut = () => supabase.auth.signOut();
 
-  return { session, loading, signIn, signOut };
+  return { session, loading, signIn, signInWithPassword, signOut };
 }
