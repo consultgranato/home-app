@@ -5,8 +5,11 @@ const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 
 // ---- DB <-> App transforms ----
 
-const fromDbEvent = (r) => ({ id: r.id, date: r.event_date, title: r.title, time: r.time || "", person: r.person });
-const toDbEvent = (e, hid) => ({ household_id: hid, event_date: e.date, title: e.title, time: e.time || null, person: e.person });
+const fromDbEvent = (r) => ({ id: r.id, date: r.event_date, title: r.title, time: r.time || "", end_time: r.end_time || "", person: r.person });
+const toDbEvent = (e, hid) => ({ household_id: hid, event_date: e.date, title: e.title, time: e.time || null, end_time: e.end_time || null, person: e.person });
+
+const fromDbDayTask = (r) => ({ id: r.id, date: r.task_date, text: r.text, done: r.done });
+const toDbDayTask = (t, hid) => ({ household_id: hid, task_date: t.date, text: t.text, done: t.done });
 
 const fromDbDinner = (r) => ({ name: r.name || "", ingredients: r.notes || "" });
 
@@ -122,6 +125,7 @@ export function useAppData(householdId) {
   const [importantFiles, setImportantFiles] = useState([]);
   const [dates, setDates] = useState([]);
   const [settings, setSettings] = useState({ name1: "Tony", name2: "Alex", home: "Our Home", color1: "indigo", color2: "rose", colorBoth: "emerald" });
+  const [dayTasks, setDayTasks] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
   // ---- Load all data ----
@@ -133,7 +137,7 @@ export function useAppData(householdId) {
 
       const [
         evRes, dinRes, grRes, todoRes, noteRes, choreRes, tripRes, itemsRes,
-        ideaRes, placeRes, mealRes, hhRes, dateRes,
+        ideaRes, placeRes, mealRes, hhRes, dateRes, dayTasksRes,
       ] = await Promise.all([
         supabase.from("events").select("*").eq("household_id", householdId),
         supabase.from("dinners").select("*").eq("household_id", householdId),
@@ -148,6 +152,7 @@ export function useAppData(householdId) {
         supabase.from("favorite_meals").select("*").eq("household_id", householdId),
         supabase.from("households").select("*").eq("id", householdId).single(),
         supabase.from("key_dates").select("*").eq("household_id", householdId),
+        supabase.from("day_tasks").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       ]);
 
       if (evRes.data) setEvents(evRes.data.map(fromDbEvent));
@@ -206,6 +211,7 @@ export function useAppData(householdId) {
       }
 
       if (dateRes.data) setDates(dateRes.data.map(fromDbKeyDate));
+      if (dayTasksRes.data) setDayTasks(dayTasksRes.data.map(fromDbDayTask));
 
       setDataLoading(false);
     }
@@ -354,6 +360,15 @@ export function useAppData(householdId) {
         setSettings(fromDbSettings(n));
         setImportant(n.important_text || "");
       }
+    });
+
+    sub(`rt-daytasks-${householdId}`, "day_tasks", `household_id=eq.${householdId}`, ({ eventType, new: n, old: o }) => {
+      setDayTasks((cur) => {
+        if (eventType === "INSERT") { if (cur.some((r) => r.id === n.id)) return cur; return [...cur, fromDbDayTask(n)]; }
+        if (eventType === "UPDATE") return cur.map((r) => r.id === n.id ? fromDbDayTask(n) : r);
+        if (eventType === "DELETE") return cur.filter((r) => r.id !== o.id);
+        return cur;
+      });
     });
 
     return () => { channels.forEach((ch) => supabase.removeChannel(ch)); };
@@ -547,6 +562,14 @@ export function useAppData(householdId) {
     });
   }, [dates, householdId]);
 
+  const upDayTasks = useCallback(async (newDayTasks) => {
+    const cur = dayTasks;
+    setDayTasks(newDayTasks);
+    await syncRows("day_tasks", cur, newDayTasks, (t) => toDbDayTask(t, householdId), (localId, dbId) => {
+      setDayTasks((prev) => prev.map((t) => t.id === localId ? { ...t, id: dbId } : t));
+    });
+  }, [dayTasks, householdId]);
+
   const upSettings = useCallback(async (newSettings) => {
     setSettings(newSettings);
     await supabase.from("households").update({
@@ -578,9 +601,9 @@ export function useAppData(householdId) {
 
   return {
     events, dinners, grocery, todos, notes, chores, trips, ideas,
-    visited, meals, important, importantFiles, dates, settings, dataLoading,
+    visited, meals, important, importantFiles, dates, settings, dayTasks, dataLoading,
     upEvents, upDinners, upGrocery, upTodos, upNotes, upChores, upTrips,
     upIdeas, upVisited, upMeals, upImportant, upImportantFiles, upDates, upSettings,
-    addAttachment, removeAttachment,
+    upDayTasks, addAttachment, removeAttachment,
   };
 }

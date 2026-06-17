@@ -93,6 +93,29 @@ function formatTime(hhmm){
   const h12=h%12||12;
   return `${h12}:${String(m).padStart(2,"0")} ${ampm}`;
 }
+function formatTimeRange(start, end){
+  if(start && end) return `${formatTime(start)} – ${formatTime(end)}`;
+  if(start) return formatTime(start);
+  return "—";
+}
+function isEventPast(e){
+  const now=new Date();
+  const [y,mo,d]=e.date.split("-").map(Number);
+  if(!e.time){
+    const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+    return new Date(y,mo-1,d)<today;
+  }
+  const checkTime=(e.end_time&&e.end_time!=="")?e.end_time:e.time;
+  const [h,min]=checkTime.split(":").map(Number);
+  return new Date(y,mo-1,d,h,min)<now;
+}
+function tripsForDate(trips,iso){
+  return trips.filter(t=>{
+    if(!t.start) return false;
+    const end=t.end||t.start;
+    return iso>=t.start&&iso<=end;
+  });
+}
 
 // ========== AUTH SCREEN ==========
 function AuthScreen({ signIn, signUp }) {
@@ -288,9 +311,9 @@ export default function App() {
     );
   }
 
-  const { events, dinners, grocery, todos, notes, chores, trips, ideas, visited, meals, important, importantFiles, dates, settings,
+  const { events, dinners, grocery, todos, notes, chores, trips, ideas, visited, meals, important, importantFiles, dates, settings, dayTasks,
     upEvents, upDinners, upGrocery, upTodos, upNotes, upChores, upTrips, upIdeas, upVisited, upMeals,
-    upImportant, upImportantFiles, upDates, upSettings, addAttachment, removeAttachment } = data;
+    upImportant, upImportantFiles, upDates, upSettings, upDayTasks, addAttachment, removeAttachment } = data;
 
   const nameOf = who => who==="p1"?settings.name1 : who==="p2"?settings.name2 : "Both";
   const colors = colorsFromSettings(settings);
@@ -335,7 +358,7 @@ export default function App() {
 
       <main className="max-w-4xl mx-auto px-4 py-5">
         {tab==="home"    && <Dashboard {...{events,dinners,grocery,todos,chores,trips,dates,settings,colors,slot,setTab}}/>}
-        {tab==="cal"     && <CalendarView {...{events,upEvents,dates,upDates,settings,colors}}/>}
+        {tab==="cal"     && <CalendarView {...{events,upEvents,dates,upDates,settings,colors,dayTasks,upDayTasks,trips}}/>}
         {tab==="kitchen" && <KitchenView {...{dinners,upDinners,grocery,upGrocery,meals,upMeals}}/>}
         {tab==="tasks"   && <TasksView {...{todos,upTodos,chores,upChores,settings,colors,nameOf}}/>}
         {tab==="travel"  && <TravelView {...{trips,upTrips,ideas,upIdeas,visited,upVisited,settings}}/>}
@@ -468,7 +491,7 @@ function tripStatus(t){
 function Dashboard({events,dinners,grocery,todos,chores,trips,dates,settings,colors,slot,setTab}){
   const t = todayISO();
   const now = new Date();
-  const todaysEvents = events.filter(e=>e.date===t).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const todaysEvents = events.filter(e=>e.date===t&&!isEventPast(e)).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
   const todayDinner = dinners[WEEKDAYS[weekdayIndexMon(now)]];
   const sharedOpen = (todos.shared||[]).filter(x=>!x.done).slice(0,5);
   const groceryLeft = grocery.filter(g=>!g.checked).length;
@@ -518,10 +541,12 @@ function Dashboard({events,dinners,grocery,todos,chores,trips,dates,settings,col
           {todaysEvents.length===0
             ? <Empty>Nothing scheduled today.</Empty>
             : todaysEvents.map(e=>(
-              <div key={e.id} className="flex items-center gap-3 py-1.5">
-                <span className={`w-2.5 h-2.5 rounded-full ${colors[e.person].dot}`}/>
-                <span className="text-sm text-zinc-500 w-20 shrink-0">{e.time?formatTime(e.time):"—"}</span>
-                <span className="text-sm text-zinc-700">{e.title}</span>
+              <div key={e.id} className="flex items-start gap-3 py-1.5">
+                <span className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${colors[e.person].dot}`}/>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-zinc-700 leading-snug">{e.title}</p>
+                  <p className="text-xs text-zinc-400">{formatTimeRange(e.time,e.end_time)}</p>
+                </div>
               </div>
             ))}
         </Card>
@@ -584,16 +609,19 @@ function Card({title,icon:Icon,action,children}){
 }
 
 // ---------- Calendar ----------
-function CalendarView({events,upEvents,dates,upDates,settings,colors}){
+function CalendarView({events,upEvents,dates,upDates,settings,colors,dayTasks,upDayTasks,trips}){
   const [view, setView] = useState("week");
   const [cursor, setCursor] = useState(new Date());
   const [modalDate, setModalDate] = useState(null);
   const [filter, setFilter] = useState("all");
 
   const personOpts = [{id:"p1",label:settings.name1},{id:"p2",label:settings.name2},{id:"both",label:"Both"}];
-  const addEvent = (date,title,time,person) => { if(title.trim()) upEvents([...events,{id:uid(),date,title:title.trim(),time,person}]); };
+  const addEvent = (date,title,time,endTime,person) => { if(title.trim()) upEvents([...events,{id:uid(),date,title:title.trim(),time,end_time:endTime,person}]); };
   const updEvent = (id,patch) => upEvents(events.map(e=>e.id===id?{...e,...patch}:e));
   const delEvent = id => upEvents(events.filter(e=>e.id!==id));
+  const addDayTask = (date,text) => { if(text.trim()) upDayTasks([...dayTasks,{id:uid(),date,text:text.trim(),done:false}]); };
+  const updDayTask = (id,patch) => upDayTasks(dayTasks.map(t=>t.id===id?{...t,...patch}:t));
+  const delDayTask = id => upDayTasks(dayTasks.filter(t=>t.id!==id));
 
   const visible = events.filter(e=> filter==="all" ? true : (e.person===filter || e.person==="both"));
   const defaultPerson = filter==="all" ? "both" : filter;
@@ -619,14 +647,18 @@ function CalendarView({events,upEvents,dates,upDates,settings,colors}){
       ]}/>
 
       {view==="month"
-        ? <MonthGrid cursor={cursor} events={visible} colors={colors} onPick={setModalDate}/>
-        : <WeekGrid cursor={cursor} events={visible} colors={colors} onPick={setModalDate}/>}
+        ? <MonthGrid cursor={cursor} events={visible} colors={colors} dayTasks={dayTasks} trips={trips} onPick={setModalDate}/>
+        : <WeekGrid cursor={cursor} events={visible} colors={colors} dayTasks={dayTasks} trips={trips} onPick={setModalDate}/>}
 
       <KeyDates dates={dates} upDates={upDates}/>
 
       {modalDate && (
-        <DayModal date={modalDate} events={events.filter(e=>e.date===modalDate)} personOpts={personOpts} colors={colors}
-          defaultPerson={defaultPerson} onAdd={addEvent} onUpdate={updEvent} onDel={delEvent} close={()=>setModalDate(null)}/>
+        <DayModal date={modalDate} events={events.filter(e=>e.date===modalDate)}
+          dayTasks={dayTasks.filter(t=>t.date===modalDate)}
+          personOpts={personOpts} colors={colors}
+          defaultPerson={defaultPerson} onAdd={addEvent} onUpdate={updEvent} onDel={delEvent}
+          onAddTask={addDayTask} onUpdateTask={updDayTask} onDelTask={delDayTask}
+          close={()=>setModalDate(null)}/>
       )}
     </div>
   );
@@ -635,7 +667,7 @@ function shift(d,view,dir){ const n=new Date(d); if(view==="month") n.setMonth(n
 function weekLabel(d){ const s=startOfWeek(d); const e=new Date(s); e.setDate(e.getDate()+6); return `${MONTHS[s.getMonth()].slice(0,3)} ${s.getDate()} – ${MONTHS[e.getMonth()].slice(0,3)} ${e.getDate()}`; }
 function startOfWeek(d){ const n=new Date(d); n.setDate(n.getDate()-weekdayIndexMon(n)); n.setHours(0,0,0,0); return n; }
 
-function MonthGrid({cursor,events,colors,onPick}){
+function MonthGrid({cursor,events,colors,dayTasks,trips,onPick}){
   const year=cursor.getFullYear(), month=cursor.getMonth();
   const startPad=weekdayIndexMon(new Date(year,month,1));
   const daysInMonth=new Date(year,month+1,0).getDate();
@@ -653,15 +685,29 @@ function MonthGrid({cursor,events,colors,onPick}){
           if(!c) return <div key={i} className="min-h-20 border-b border-r border-zinc-100 bg-zinc-50/50"/>;
           const iso=toISO(c);
           const evs=events.filter(e=>e.date===iso);
+          const dayTrips=tripsForDate(trips,iso);
+          const tasks=(dayTasks||[]).filter(t=>t.date===iso);
+          const hasOpenTasks=tasks.some(t=>!t.done);
           const isToday=iso===todayISO();
+          const totalItems=evs.length+dayTrips.length;
           return (
             <button key={i} onClick={()=>onPick(iso)} className="min-h-20 border-b border-r border-zinc-100 p-1 text-left hover:bg-zinc-50 transition align-top">
-              <span className={`inline-flex items-center justify-center w-6 h-6 text-xs rounded-full ${isToday?"bg-amber-400 text-zinc-900 font-semibold":"text-zinc-500"}`}>{c.getDate()}</span>
+              <div className="flex items-center gap-0.5">
+                <span className={`inline-flex items-center justify-center w-6 h-6 text-xs rounded-full ${isToday?"bg-amber-400 text-zinc-900 font-semibold":"text-zinc-500"}`}>{c.getDate()}</span>
+                {hasOpenTasks && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"/>}
+              </div>
               <div className="mt-0.5 space-y-0.5">
-                {evs.slice(0,3).map(e=>(
-                  <div key={e.id} className={`text-[10px] truncate rounded px-1 ${colors[e.person].chip}`}>{e.time?formatTime(e.time)+" ":""}{e.title}</div>
+                {evs.slice(0,totalItems>3?1:3).map(e=>(
+                  <div key={e.id} className={`text-[10px] truncate rounded px-1 ${isEventPast(e)?"opacity-40 bg-zinc-100 text-zinc-500":colors[e.person].chip}`}>
+                    {e.time?formatTime(e.time)+" ":""}{e.title}
+                  </div>
                 ))}
-                {evs.length>3 && <div className="text-[10px] text-zinc-400 px-1">+{evs.length-3} more</div>}
+                {dayTrips.slice(0,2).map(t=>(
+                  <div key={t.id} className="text-[10px] truncate rounded px-1 bg-amber-100 text-amber-800">
+                    ✈ {t.destination||t.name}
+                  </div>
+                ))}
+                {totalItems>3 && <div className="text-[10px] text-zinc-400 px-1">+{totalItems-Math.min(evs.length,totalItems>3?1:3)} more</div>}
               </div>
             </button>
           );
@@ -670,7 +716,7 @@ function MonthGrid({cursor,events,colors,onPick}){
     </div>
   );
 }
-function WeekGrid({cursor,events,colors,onPick}){
+function WeekGrid({cursor,events,colors,dayTasks,trips,onPick}){
   const start=startOfWeek(cursor);
   const days=[...Array(7)].map((_,i)=>{const d=new Date(start); d.setDate(d.getDate()+i); return d;});
   return (
@@ -678,17 +724,28 @@ function WeekGrid({cursor,events,colors,onPick}){
       {days.map((d,i)=>{
         const iso=toISO(d);
         const evs=events.filter(e=>e.date===iso).sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+        const dayTrips=tripsForDate(trips,iso);
+        const tasks=(dayTasks||[]).filter(t=>t.date===iso);
+        const hasOpenTasks=tasks.some(t=>!t.done);
         const isToday=iso===todayISO();
         return (
           <button key={i} onClick={()=>onPick(iso)} className={`bg-white rounded-xl border p-2 text-left min-h-28 hover:border-zinc-300 transition shadow-sm ${isToday?"border-amber-400/70 ring-1 ring-amber-400/30":"border-zinc-200"}`}>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-zinc-400">{WD_SHORT[i]}</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-zinc-400">{WD_SHORT[i]}</span>
+                {hasOpenTasks && <span className="w-1.5 h-1.5 rounded-full bg-amber-400"/>}
+              </div>
               <span className={`text-sm font-semibold ${isToday?"text-amber-600":"text-zinc-700"}`}>{d.getDate()}</span>
             </div>
             <div className="space-y-1">
               {evs.map(e=>(
-                <div key={e.id} className={`text-[11px] rounded px-1.5 py-0.5 ${colors[e.person].chip}`}>
+                <div key={e.id} className={`text-[11px] rounded px-1.5 py-0.5 ${isEventPast(e)?"opacity-40 bg-zinc-100 text-zinc-500":colors[e.person].chip}`}>
                   {e.time && <span className="opacity-80">{formatTime(e.time)} </span>}{e.title}
+                </div>
+              ))}
+              {dayTrips.map(t=>(
+                <div key={t.id} className="text-[11px] rounded px-1.5 py-0.5 bg-amber-100 text-amber-800">
+                  ✈ {t.destination||t.name}
                 </div>
               ))}
             </div>
@@ -698,44 +755,106 @@ function WeekGrid({cursor,events,colors,onPick}){
     </div>
   );
 }
-function DayModal({date,events,personOpts,colors,defaultPerson,onAdd,onUpdate,onDel,close}){
-  const [title,setTitle]=useState(""); const [time,setTime]=useState(""); const [person,setPerson]=useState(defaultPerson||"both");
+function DayModal({date,events,dayTasks,personOpts,colors,defaultPerson,onAdd,onUpdate,onDel,onAddTask,onUpdateTask,onDelTask,close}){
+  const [section,setSection]=useState("events");
+  const [title,setTitle]=useState("");
+  const [time,setTime]=useState("");
+  const [endTime,setEndTime]=useState("");
+  const [person,setPerson]=useState(defaultPerson||"both");
   const [editId,setEditId]=useState(null);
-  const dayEvents=events.sort((a,b)=>(a.time||"").localeCompare(b.time||""));
-  const startEdit=e=>{ setEditId(e.id); setTitle(e.title); setTime(e.time||""); setPerson(e.person); };
-  const reset=()=>{ setEditId(null); setTitle(""); setTime(""); setPerson(defaultPerson||"both"); };
+  const [taskText,setTaskText]=useState("");
+
+  const dayEvents=[...events].sort((a,b)=>(a.time||"").localeCompare(b.time||""));
+  const startEdit=e=>{ setSection("events"); setEditId(e.id); setTitle(e.title); setTime(e.time||""); setEndTime(e.end_time||""); setPerson(e.person); };
+  const reset=()=>{ setEditId(null); setTitle(""); setTime(""); setEndTime(""); setPerson(defaultPerson||"both"); };
   const submit=()=>{
     if(!title.trim()) return;
-    if(editId) onUpdate(editId,{title:title.trim(),time,person});
-    else onAdd(date,title,time,person);
+    if(editId) onUpdate(editId,{title:title.trim(),time,end_time:endTime,person});
+    else onAdd(date,title,time,endTime,person);
     reset();
   };
+  const addTask=()=>{ if(!taskText.trim()) return; onAddTask(date,taskText); setTaskText(""); };
+  const openTasks=(dayTasks||[]).filter(t=>!t.done).length;
+
   return (
     <Modal close={close} title={prettyDate(parseISO(date))}>
-      <div className="space-y-2 mb-4">
-        {dayEvents.length===0 && <p className="text-sm text-zinc-500">No events yet.</p>}
-        {dayEvents.map(e=>(
-          <div key={e.id} className={`flex items-center gap-2 rounded-xl px-3 py-2 ${editId===e.id?"bg-zinc-100":"bg-zinc-50"}`}>
-            <span className={`w-2.5 h-2.5 rounded-full ${colors[e.person].dot}`}/>
-            <span className="text-sm text-zinc-500 w-20 shrink-0">{e.time?formatTime(e.time):"—"}</span>
-            <span className="text-sm flex-1 text-zinc-800">{e.title}</span>
-            <button onClick={()=>startEdit(e)} className="text-zinc-400 hover:text-amber-600 p-2 -m-1"><Pencil size={14}/></button>
-            <button onClick={()=>{ if(editId===e.id) reset(); onDel(e.id); }} className="text-zinc-400 hover:text-rose-500 p-2 -m-1"><Trash2 size={15}/></button>
+      {/* Section toggle */}
+      <div className="flex bg-zinc-100 rounded-xl p-0.5 mb-4">
+        <button onClick={()=>setSection("events")}
+          className={`flex-1 py-2 text-sm rounded-lg transition ${section==="events"?"bg-white font-medium shadow-sm text-zinc-800":"text-zinc-500"}`}>
+          Events {dayEvents.length>0 && <span className="text-xs text-zinc-400 ml-0.5">({dayEvents.length})</span>}
+        </button>
+        <button onClick={()=>setSection("tasks")}
+          className={`flex-1 py-2 text-sm rounded-lg transition ${section==="tasks"?"bg-white font-medium shadow-sm text-zinc-800":"text-zinc-500"}`}>
+          Tasks {openTasks>0 && <span className="text-xs text-amber-500 ml-0.5">({openTasks})</span>}
+        </button>
+      </div>
+
+      {section==="events" && (
+        <>
+          <div className="space-y-2 mb-4">
+            {dayEvents.length===0 && <p className="text-sm text-zinc-500">No events yet.</p>}
+            {dayEvents.map(e=>(
+              <div key={e.id} className={`flex items-center gap-2 rounded-xl px-3 py-2.5 ${editId===e.id?"bg-zinc-100":"bg-zinc-50"} ${isEventPast(e)?"opacity-50":""}`}>
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${colors[e.person].dot}`}/>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-zinc-800 leading-snug">{e.title}</p>
+                  <p className="text-xs text-zinc-500">{formatTimeRange(e.time,e.end_time)}</p>
+                </div>
+                <button onClick={()=>startEdit(e)} className="text-zinc-400 hover:text-amber-600 p-2 -m-1 shrink-0"><Pencil size={14}/></button>
+                <button onClick={()=>{ if(editId===e.id) reset(); onDel(e.id); }} className="text-zinc-400 hover:text-rose-500 p-2 -m-1 shrink-0"><Trash2 size={15}/></button>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      <div className="space-y-2 border-t border-zinc-200 pt-3">
-        {editId && <p className="text-xs text-amber-600">Editing event</p>}
-        <input value={title} onChange={e=>setTitle(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} placeholder="Event title…" className="input"/>
-        <div className="flex gap-2">
-          <input type="time" value={time} onChange={e=>setTime(e.target.value)} className="input flex-none w-32"/>
-          <select value={person} onChange={e=>setPerson(e.target.value)} className="input flex-1 min-w-0">
-            {personOpts.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          <button onClick={submit} className="bg-amber-400 text-zinc-900 rounded-xl px-4 text-sm font-medium hover:bg-amber-300 shrink-0">{editId?"Save":"Add"}</button>
-        </div>
-        {editId && <button onClick={reset} className="text-xs text-zinc-500 hover:text-zinc-700">Cancel edit</button>}
-      </div>
+          <div className="space-y-3 border-t border-zinc-200 pt-3">
+            {editId && <p className="text-xs text-amber-600 font-medium">Editing event</p>}
+            <input value={title} onChange={e=>setTitle(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}
+              placeholder="Event title…" className="input" style={{fontSize:"1rem"}}/>
+            <div className="flex gap-2">
+              <div className="flex-1 min-w-0">
+                <label className="text-[11px] text-zinc-400 mb-1 block">Start time</label>
+                <input type="time" value={time} onChange={e=>setTime(e.target.value)} className="input" style={{fontSize:"1rem"}}/>
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="text-[11px] text-zinc-400 mb-1 block">End time (optional)</label>
+                <input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)} className="input" style={{fontSize:"1rem"}}/>
+              </div>
+            </div>
+            <select value={person} onChange={e=>setPerson(e.target.value)} className="input" style={{fontSize:"1rem"}}>
+              {personOpts.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+            <button onClick={submit} className="w-full bg-amber-400 text-zinc-900 rounded-xl py-3 text-sm font-medium hover:bg-amber-300">
+              {editId?"Save changes":"Add event"}
+            </button>
+            {editId && <button onClick={reset} className="w-full text-center text-xs text-zinc-500 hover:text-zinc-700 py-1">Cancel edit</button>}
+          </div>
+        </>
+      )}
+
+      {section==="tasks" && (
+        <>
+          <div className="space-y-1.5 mb-4">
+            {(dayTasks||[]).length===0 && <p className="text-sm text-zinc-500">No tasks yet.</p>}
+            {(dayTasks||[]).map(t=>(
+              <div key={t.id} className="flex items-center gap-2.5 rounded-xl px-3 py-2.5 bg-zinc-50">
+                <button onClick={()=>onUpdateTask(t.id,{done:!t.done})}
+                  className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition ${t.done?"bg-amber-400 border-amber-400 text-zinc-900":"border-zinc-300"}`}>
+                  {t.done && <Check size={11}/>}
+                </button>
+                <span className={`text-sm flex-1 min-w-0 ${t.done?"line-through text-zinc-400":"text-zinc-700"}`}>{t.text}</span>
+                <button onClick={()=>onDelTask(t.id)} className="text-zinc-400 hover:text-rose-500 p-2 -m-1 shrink-0"><X size={14}/></button>
+              </div>
+            ))}
+          </div>
+          <div className="space-y-3 border-t border-zinc-200 pt-3">
+            <input value={taskText} onChange={e=>setTaskText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()}
+              placeholder="Add a task for this day…" className="input" style={{fontSize:"1rem"}}/>
+            <button onClick={addTask} className="w-full bg-amber-400 text-zinc-900 rounded-xl py-3 text-sm font-medium hover:bg-amber-300">
+              Add task
+            </button>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }
@@ -1363,7 +1482,12 @@ function Field({label,children}){ return <div><label className="text-xs text-zin
 function Modal({title,close,children}){
   return (
     <div className="fixed inset-0 bg-black/50 z-40 flex items-end md:items-center justify-center p-0 md:p-4" onClick={close}>
-      <div onClick={e=>e.stopPropagation()} className="bg-white border border-zinc-200 rounded-t-3xl md:rounded-2xl w-full md:max-w-md max-h-[85vh] overflow-y-auto p-5 shadow-2xl" style={{paddingBottom:"calc(1.25rem + env(safe-area-inset-bottom))"}}>
+      <div onClick={e=>e.stopPropagation()} className="bg-white border border-zinc-200 rounded-t-3xl md:rounded-2xl w-full md:max-w-md overflow-y-auto p-5 shadow-2xl"
+        style={{
+          maxHeight:"calc(92vh - env(safe-area-inset-top))",
+          paddingBottom:"calc(1.25rem + env(safe-area-inset-bottom))",
+          paddingTop:"1.25rem",
+        }}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-zinc-900">{title}</h3>
           <button onClick={close} className="p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-500"><X size={18}/></button>
